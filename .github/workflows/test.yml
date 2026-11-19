@@ -17,7 +17,12 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run vectors && git diff --exit-code -- vectors
-      - run: forge test
+      - name: vectors are current
+        run: npm run vectors && git diff --exit-code -- vectors
+      - name: forge test (unit, fuzz, invariant, vectors)
+        run: forge test
       - run: npm run typecheck
-      - run: npm run test:ts
+      - name: vitest
+        run: npm run test:ts
+      - name: contracts reach ML-DSA only through the precompiles, no ecrecover
+        run: npm run cbom:check

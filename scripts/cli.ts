@@ -1,17 +1,25 @@
-import {
-  closeWindow,
-  newAccount,
-  openWindow,
-  printStatus,
-  registerAccount,
-  registerKem,
-} from "./accounts.js";
+import { readFileSync } from "node:fs";
+import type { RecipientCard } from "@qorechain/qoreseal";
+import { readVerifiedKemKey, testnetClient } from "../src/ts/keydir.js";
+import { TESTNET } from "../src/ts/network.js";
+import { CHAIN_ID, newAccount, printStatus } from "./accounts.js";
+import { registerKem, registerMlDsa } from "./register.js";
+import { closeWindow, openWindow } from "./window.js";
 
 const [command, ...args] = process.argv.slice(2);
 
-function need(value: string | undefined, usage: string): string {
+const USAGE = `usage:
+  pq new-account <name>
+  pq status <name>
+  pq register <name>
+  pq register-kem <name> [--replace]
+  pq open-window <name> <txs> <maxValueUqor> [targets...]
+  pq close-window <name>
+  pq verify-kem <qor1-address> [card.json]`;
+
+function need(value: string | undefined): string {
   if (!value) {
-    console.error(usage);
+    console.error(USAGE);
     process.exit(1);
   }
   return value;
@@ -20,32 +28,44 @@ function need(value: string | undefined, usage: string): string {
 async function main(): Promise<void> {
   switch (command) {
     case "new-account":
-      await newAccount(need(args[0], "usage: pq new-account <name>"));
+      await newAccount(need(args[0]));
       return;
     case "status":
-      await printStatus(need(args[0], "usage: pq status <name>"));
+      await printStatus(need(args[0]));
       return;
     case "register":
-      await registerAccount(need(args[0], "usage: pq register <name>"));
-      return;
-    case "open-window": {
-      const name = need(args[0], "usage: pq open-window <name> <blocks> <txs> <maxValueUqor> [targets...]");
-      const blocks = Number(need(args[1], "blocks required"));
-      const txs = Number(need(args[2], "txs required"));
-      const maxValue = need(args[3], "maxValue required");
-      await openWindow(name, blocks, txs, maxValue, args.slice(4));
-      return;
-    }
-    case "close-window":
-      await closeWindow(need(args[0], "usage: pq close-window <name>"));
+      await registerMlDsa(need(args[0]));
       return;
     case "register-kem":
-      registerKem();
+      await registerKem(need(args[0]), { replace: args.includes("--replace") });
       return;
-    default:
-      console.error(
-        "usage: pq <new-account|status|register|open-window|close-window|register-kem> ...",
+    case "open-window":
+      await openWindow(need(args[0]), {
+        txs: Number(need(args[1])),
+        maxValueUqor: need(args[2]),
+        targets: args.slice(3),
+      });
+      return;
+    case "close-window":
+      await closeWindow(need(args[0]));
+      return;
+    case "verify-kem": {
+      const address = need(args[0]);
+      const card = JSON.parse(readFileSync(args[1] ?? `cards/${address}.json`, "utf8")) as RecipientCard;
+      const verified = await readVerifiedKemKey({
+        client: testnetClient(),
+        rest: TESTNET.rest,
+        chainId: CHAIN_ID,
+        address,
+        card,
+      });
+      console.log(
+        `ml-kem verified ${verified.address} bytes=${verified.mlkemPublicKey.length} sha3=${verified.mlkemKeySha3}`,
       );
+      return;
+    }
+    default:
+      console.error(USAGE);
       process.exit(1);
   }
 }

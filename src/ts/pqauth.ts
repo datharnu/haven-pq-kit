@@ -1,4 +1,5 @@
-import { encodeAbiParameters, keccak256, toBytes, type Address, type Hex } from "viem";
+import { pqcSign } from "@qorechain/sdk";
+import { encodeAbiParameters, hexToBytes, keccak256, toBytes, toHex, type Address, type Hex } from "viem";
 
 /** Domain string hashed by `PqAuth.DOMAIN`. */
 export const AUTH_DOMAIN_STRING = "haven-pq-kit.PqAuth.v1";
@@ -38,4 +39,12 @@ export function encodeAuthMessage(fields: AuthFields): Hex {
       fields.argsHash,
     ],
   );
+}
+
+export type SignedAuth = { message: Hex; signature: Hex };
+
+/** ML-DSA-87 over the `PqAuth` message. Pass the result's `signature` to `authorize`. */
+export function signAuth(secretKey: Uint8Array, fields: AuthFields): SignedAuth {
+  const message = encodeAuthMessage(fields);
+  return { message, signature: toHex(pqcSign(secretKey, hexToBytes(message))) };
 }

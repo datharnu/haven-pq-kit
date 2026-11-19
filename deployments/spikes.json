@@ -1,0 +1,32 @@
+{
+  "network": "qorechain-diana",
+  "account": "qor143f0ghn8slqguwez73087dvq8lqnuuukqdu9fl",
+  "contracts": [],
+  "transactions": [
+    {
+      "hash": "306C8D4B8EDB04FEBDDC79880BFBFAFC0B2F8891CC78878FF8DDA7C25B2BDE90",
+      "tier": "enrollment",
+      "note": "MsgRegisterPQCKeyV2 with proof of possession"
+    },
+    {
+      "hash": "5EBD5134AA247B528EB28C23B5980E0C4AA19294A83F01B6BE6DF141599A5349",
+      "tier": "pqc",
+      "note": "MsgOpenEVMWindow scoped to one target"
+    },
+    {
+      "hash": "0x63c5658017bc1e6579dc10b4992499f2135f052ef0b88b445ef5e319a044a45e",
+      "tier": "classical",
+      "note": "EVM transfer admitted by that window"
+    },
+    {
+      "hash": "B22F66C9D32888D112C36BC2E506499393AC91375B85C9822229133EC8E0E56B",
+      "tier": "pqc",
+      "note": "MsgCloseEVMWindow"
+    },
+    {
+      "hash": "E3A7A234B84DABFC6E59FCF966CE1E9A4EC5ED1C5B3E43060F1CA111BBC59012",
+      "tier": "pqc",
+      "note": "MsgRegisterKEMKey, ML-KEM-1024"
+    }
+  ]
+}

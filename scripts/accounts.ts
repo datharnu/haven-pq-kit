@@ -1,26 +1,23 @@
 import { StargateClient } from "@cosmjs/stargate";
-import { createPublicClient, hexToBytes, http, type Address } from "viem";
-import {
-  EthNativeSigner,
-  buildRegisterPqcKeyMsg,
-  deriveUnifiedAccount,
-  fetchEvmWindow,
-  fetchPqcStatus,
-  generateMnemonic,
-  openEvmWindowMsg,
-  closeEvmWindowMsg,
-  signProofOfPossession,
-  type UnifiedAccount,
-} from "@qorechain/sdk";
+import { createPublicClient, http, type Address } from "viem";
+import { EthNativeSigner, deriveUnifiedAccount, fetchEvmWindow, fetchPqcStatus, generateMnemonic, type UnifiedAccount } from "@qorechain/sdk";
+import { deriveSealKeys, type SealKeyPair } from "@qorechain/qoreseal";
+import { fetchKemKey } from "@qorechain/qoreseal/network";
 import { TESTNET, qorechainDiana } from "../src/ts/network.js";
 import { readMnemonic, writeSecret } from "./secrets.js";
 
-const CHAIN_ID = "qorechain-diana";
+export const CHAIN_ID = "qorechain-diana";
 /** 0.15 uqor per gas, above the network minimum of 0.1, for a 600,000 gas limit. */
 const FEE = { amount: [{ denom: "uqor", amount: "90000" }], gas: "600000" };
 
+/** The secp256k1 key and the canonical ML-DSA-87 key, both from the mnemonic. */
 export async function loadAccount(name: string): Promise<UnifiedAccount> {
   return deriveUnifiedAccount(readMnemonic(name));
+}
+
+/** The ML-KEM-1024 and X25519 keys QoreSeal derives from the same mnemonic (index 0). */
+export function loadSealKeys(name: string, index = 0): SealKeyPair {
+  return deriveSealKeys({ mnemonic: readMnemonic(name), index });
 }
 
 export async function newAccount(name: string): Promise<void> {
@@ -45,15 +42,17 @@ async function accountSequence(account: UnifiedAccount): Promise<{ accountNumber
   return { accountNumber: BigInt(body.account.account_number), sequence: BigInt(nonce) };
 }
 
+export type NativeMessages = Parameters<EthNativeSigner["sign"]>[0]["messages"];
+
 /**
  * A unified account is eth-native: its qor1 address is the 20-byte EVM address.
  * The cosmjs secp256k1 signer derives a different address, so every native
  * transaction goes through EthNativeSigner. Registration is the one classical
  * transaction; everything after it is hybrid.
  */
-async function broadcast(
+export async function broadcast(
   account: UnifiedAccount,
-  messages: Parameters<EthNativeSigner["sign"]>[0]["messages"],
+  messages: NativeMessages,
   signMode: "hybrid" | "classical",
 ): Promise<string> {
   const auth = await accountSequence(account);
@@ -76,92 +75,11 @@ async function broadcast(
   }
 }
 
-export async function registerAccount(name: string): Promise<void> {
-  const account = await loadAccount(name);
-  const status = await fetchPqcStatus({ rest: TESTNET.rest, address: account.cosmos });
-  if (status.registered) {
-    const registered = status.pubkey;
-    const bytes =
-      typeof registered === "string"
-        ? hexToBytes(registered.startsWith("0x") ? (registered as `0x${string}`) : `0x${registered}`)
-        : registered;
-    const ours = bytes !== undefined && Buffer.from(bytes).equals(Buffer.from(account.pqc.publicKey));
-    console.log(`already registered ${account.cosmos} keyVerified=${String(ours)}`);
-    return;
-  }
-  const proof = signProofOfPossession({
-    chainId: CHAIN_ID,
-    account: account.cosmos,
-    algorithmId: 1,
-    keypair: account.pqc,
-  });
-  const hash = await broadcast(
-    account,
-    [
-      buildRegisterPqcKeyMsg(account.cosmos, {
-        pqcKeypair: account.pqc,
-        ecdsaPubkey: hexToBytes(account.publicKey as `0x${string}`),
-        proofOfPossession: proof,
-        keyType: "hybrid",
-      }),
-    ],
-    "classical",
-  );
-  console.log(`registered ${account.cosmos} tx ${hash}`);
-}
-
-export async function openWindow(
-  name: string,
-  blocks: number,
-  maxTxs: number,
-  maxValue: string,
-  allowedTargets: string[],
-): Promise<void> {
-  const account = await loadAccount(name);
-  const hash = await broadcast(
-    account,
-    [
-      openEvmWindowMsg({
-        sender: account.cosmos,
-        blocks,
-        maxTxs,
-        maxValue,
-        allowedTargets: allowedTargets.length > 0 ? allowedTargets : undefined,
-      }),
-    ],
-    "hybrid",
-  );
-  const window = await fetchEvmWindow({ rest: TESTNET.rest, address: account.cosmos });
-  console.log(`opened ${hash} live=${String(window.live)} remainingTxs=${window.remainingTxs}`);
-}
-
-export async function closeWindow(name: string): Promise<void> {
-  const account = await loadAccount(name);
-  const hash = await broadcast(account, [closeEvmWindowMsg(account.cosmos)], "hybrid");
-  console.log(`closed ${hash}`);
-}
-
-/** Open a scoped window, run `body`, and close the window even when `body` throws. */
-export async function withWindow<T>(
-  name: string,
-  blocks: number,
-  maxTxs: number,
-  maxValue: string,
-  allowedTargets: string[],
-  body: () => Promise<T>,
-): Promise<T> {
-  await openWindow(name, blocks, maxTxs, maxValue, allowedTargets);
-  try {
-    return await body();
-  } finally {
-    await closeWindow(name);
-  }
-}
-
 export async function printStatus(name: string): Promise<void> {
   const account = await loadAccount(name);
-  const [status, window, balances] = await Promise.all([
+  const [status, kem, window, balances] = await Promise.all([
     fetchPqcStatus({ rest: TESTNET.rest, address: account.cosmos }),
+    fetchKemKey({ rest: TESTNET.rest, address: account.cosmos }),
     fetchEvmWindow({ rest: TESTNET.rest, address: account.cosmos }),
     fetch(`${TESTNET.rest}/cosmos/bank/v1beta1/balances/${account.cosmos}`).then((response) => response.json()),
   ]);
@@ -170,14 +88,9 @@ export async function printStatus(name: string): Promise<void> {
   console.log(
     `pqc registered=${String(status.registered)} algorithm=${String(status.algorithmId ?? "-")} possession=${String(status.possessionProven)}`,
   );
+  console.log(`kem registered=${String(kem.registered)} algorithm=${String(kem.algorithmName ?? kem.algorithmId ?? "-")}`);
   console.log(
     `window found=${String(window.found)} live=${String(window.live)} remainingTxs=${String(window.remainingTxs)}`,
   );
   console.log(`balances ${JSON.stringify(balances)}`);
-}
-
-export function registerKem(): never {
-  throw new Error(
-    "register-kem is not wired yet. Publishing a key needs an ML-KEM-1024 derivation, and this kit will not publish an ML-DSA key in its place.",
-  );
 }

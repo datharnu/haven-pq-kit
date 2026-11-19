@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { keccak256, toBytes, type Hex } from "viem";
 import { encodeAuthMessage } from "../src/ts/pqauth.js";
-import { anyAction, quorumAction } from "../src/ts/quorum.js";
+import { anyAction, quorumAction, setMembersArgsHash } from "../src/ts/quorum.js";
 import { encodeInvoice } from "../src/ts/vendor.js";
 
 const action = keccak256(toBytes("haven.vectors.action"));
@@ -29,6 +29,15 @@ const invoice = {
   memoHash: keccak256(toBytes("memo")),
 } as const;
 
+const setMembers = {
+  members: [
+    "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "0xcccccccccccccccccccccccccccccccccccccccc",
+  ],
+  threshold: 2,
+} as const;
+
 function jsonHex(value: bigint | Hex | string): string {
   return typeof value === "bigint" ? value.toString() : value;
 }
@@ -37,6 +46,11 @@ const document = {
   action,
   quorumAction: quorumAction(action),
   anyAction: anyAction(action),
+  setMembers: {
+    members: setMembers.members,
+    threshold: setMembers.threshold,
+    argsHash: setMembersArgsHash(setMembers.members, setMembers.threshold),
+  },
   auth: {
     chainId: jsonHex(auth.chainId),
     contract: auth.contract,

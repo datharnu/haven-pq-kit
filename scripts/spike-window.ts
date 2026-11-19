@@ -1,7 +1,8 @@
 import { createPublicClient, encodeFunctionData, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { qorToEvm } from "@qorechain/sdk";
-import { loadAccount, withWindow } from "./accounts.js";
+import { loadAccount } from "./accounts.js";
+import { withWindow } from "./window.js";
 import { sendEvm } from "./evm.js";
 import { readMlDsaKey } from "../src/ts/keydir.js";
 import { PQC_STATUS, TESTNET, qorechainDiana } from "../src/ts/network.js";
@@ -39,7 +40,7 @@ console.log(
 );
 
 const target = qorToEvm(PAYEE) as `0x${string}`;
-await withWindow("spike", 200, 3, "1000000", [target], async () => {
+await withWindow("spike", { txs: 3, maxValueUqor: "1000000", targets: [target], blocks: 200 }, async () => {
   const sent = await sendEvm({
     privateKey: account.privateKey as `0x${string}`,
     to: target,

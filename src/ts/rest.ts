@@ -1,7 +1,6 @@
 /**
- * Read-only REST proxy. The public QoreChain REST endpoint sends no CORS headers,
- * so a browser reaches it through this allowlist. The proxy forwards no request
- * headers and keeps only pagination query parameters.
+ * Allowlisted, GET-only reads of the QoreChain REST API. `rest-proxy.ts` serves the
+ * same allowlist to browsers, because the public endpoint sends no CORS headers.
  */
 
 const ALLOWED: readonly RegExp[] = [
@@ -15,62 +14,43 @@ const ALLOWED: readonly RegExp[] = [
   /^\/cosmos\/tx\/v1beta1\/txs\/[0-9A-Fa-f]+$/,
 ];
 
-const KEPT_QUERY = new Set(["pagination.limit", "pagination.offset", "pagination.key", "pagination.count_total"]);
+export const KEPT_QUERY: ReadonlySet<string> = new Set([
+  "pagination.limit",
+  "pagination.offset",
+  "pagination.key",
+  "pagination.count_total",
+]);
 
 export function isAllowedRestPath(pathname: string): boolean {
   return ALLOWED.some((pattern) => pattern.test(pathname));
 }
 
-export type ProxyResult = {
-  status: number;
-  body: string;
-  contentType: string;
-};
-
-export async function handleRestProxy(
-  request: Request,
-  options: { upstream: string; prefix: string; fetch?: typeof fetch },
-): Promise<Response> {
-  const result = await proxyRest(request, options);
-  return new Response(result.body, {
-    status: result.status,
-    headers: {
-      "content-type": result.contentType,
-      "access-control-allow-origin": "*",
-      "access-control-allow-methods": "GET, OPTIONS",
-    },
-  });
+export class RestPathRefused extends Error {
+  constructor(pathname: string) {
+    super(`REST path not allowed: ${pathname}`);
+    this.name = "RestPathRefused";
+  }
 }
 
-export async function proxyRest(
-  request: Request,
-  options: { upstream: string; prefix: string; fetch?: typeof fetch },
-): Promise<ProxyResult> {
-  if (request.method === "OPTIONS") {
-    return { status: 204, body: "", contentType: "text/plain" };
+/** The upstream URL for an allowed path, with every query parameter but pagination dropped. */
+export function restUrl(upstream: string, pathname: string, query?: URLSearchParams): URL {
+  if (!isAllowedRestPath(pathname)) throw new RestPathRefused(pathname);
+  const url = new URL(upstream);
+  url.pathname = pathname;
+  for (const [key, value] of query ?? []) {
+    if (KEPT_QUERY.has(key)) url.searchParams.append(key, value);
   }
-  if (request.method !== "GET") {
-    return { status: 405, body: "method not allowed", contentType: "text/plain" };
-  }
-  const url = new URL(request.url);
-  if (!url.pathname.startsWith(options.prefix)) {
-    return { status: 404, body: "not found", contentType: "text/plain" };
-  }
-  const pathname = url.pathname.slice(options.prefix.length) || "/";
-  if (!isAllowedRestPath(pathname)) {
-    return { status: 403, body: "path not allowed", contentType: "text/plain" };
-  }
-  const upstream = new URL(options.upstream);
-  upstream.pathname = pathname;
-  for (const [key, value] of url.searchParams) {
-    if (KEPT_QUERY.has(key)) upstream.searchParams.append(key, value);
-  }
+  return url;
+}
+
+/** GET an allowed path and parse the JSON. No request headers are sent. */
+export async function readRest<T>(
+  upstream: string,
+  pathname: string,
+  options: { query?: URLSearchParams; fetch?: typeof fetch } = {},
+): Promise<T> {
   const fetcher = options.fetch ?? fetch;
-  const response = await fetcher(upstream, { method: "GET" });
-  const body = await response.text();
-  return {
-    status: response.status,
-    body,
-    contentType: response.headers.get("content-type") ?? "application/json",
-  };
+  const response = await fetcher(restUrl(upstream, pathname, options.query), { method: "GET" });
+  if (!response.ok) throw new Error(`REST ${pathname} returned ${response.status}`);
+  return (await response.json()) as T;
 }

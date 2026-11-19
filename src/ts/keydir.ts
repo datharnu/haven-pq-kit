@@ -3,13 +3,16 @@ import {
   createPublicClient,
   decodeAbiParameters,
   encodeFunctionData,
+  hexToBytes,
   http,
   keccak256,
   type Address,
   type Hex,
   type PublicClient,
 } from "viem";
-import { fetchKemKey, type KemKey } from "@qorechain/sdk";
+import { fetchKemKey, qorToEvm, type KemKey } from "@qorechain/sdk";
+import { verifyRecipientCard, type RecipientCard, type SealRecipient } from "@qorechain/qoreseal";
+import { fetchMlkemPublicKey } from "@qorechain/qoreseal/network";
 import { qorechainDiana, ML_DSA_87, PQC_STATUS, PQC_VERIFY, PUBKEY_LEN, SIG_LEN, TESTNET } from "./network.js";
 
 const statusAbi = [
@@ -111,6 +114,63 @@ export function kemKeySha3(publicKey: Uint8Array): Hex {
 
 export function pubkeyFingerprint(pubkey: Hex): Hex {
   return keccak256(pubkey);
+}
+
+export class KemKeyRefused extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "KemKeyRefused";
+  }
+}
+
+export type VerifiedKemKey = {
+  address: string;
+  mlkemPublicKey: Uint8Array;
+  mlkemKeySha3: Hex;
+  recipient: SealRecipient;
+};
+
+/**
+ * The account's ML-KEM-1024 key, accepted only when the owner's recipient card names
+ * its SHA3-256 and the card's ML-DSA-87 signature verifies under the key read from
+ * `pqcKeyStatus`. The REST answer alone is never trusted: a lying node or proxy could
+ * swap the KEM key, but it cannot sign a card for it.
+ */
+export async function readVerifiedKemKey(opts: {
+  client: PublicClient;
+  rest: string;
+  chainId: string;
+  address: string;
+  card: RecipientCard;
+  fetch?: typeof fetch;
+}): Promise<VerifiedKemKey> {
+  if (opts.card.address !== opts.address) {
+    throw new KemKeyRefused(`card is for ${opts.card.address}, not ${opts.address}`);
+  }
+  if (opts.card.chainId !== opts.chainId) {
+    throw new KemKeyRefused(`card is for chain ${opts.card.chainId}, not ${opts.chainId}`);
+  }
+  const evm = (opts.address.startsWith("0x") ? opts.address : qorToEvm(opts.address)) as Address;
+  const mlDsa = await readMlDsaKey(opts.client, evm);
+  requireMlDsaKey(mlDsa);
+  const mlkemPublicKey = await fetchMlkemPublicKey({ rest: opts.rest, address: opts.address, fetch: opts.fetch });
+  const digest = kemKeySha3(mlkemPublicKey);
+  if (digest.slice(2).toLowerCase() !== opts.card.mlkemKeySha3.replace(/^0x/, "").toLowerCase()) {
+    throw new KemKeyRefused("the registered KEM key does not match the hash the owner signed");
+  }
+  let recipient: SealRecipient;
+  try {
+    recipient = verifyRecipientCard({
+      card: opts.card,
+      chainId: opts.chainId,
+      address: opts.address,
+      pqPublicKey: hexToBytes(mlDsa.pubkey),
+      mlkemPublicKey,
+    });
+  } catch (error) {
+    throw new KemKeyRefused(`recipient card refused: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return { address: opts.address, mlkemPublicKey, mlkemKeySha3: digest, recipient };
 }
 
 export { SIG_LEN };

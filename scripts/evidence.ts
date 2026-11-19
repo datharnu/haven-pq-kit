@@ -1,71 +1,93 @@
-import { readFileSync } from "node:fs";
-import { TESTNET } from "../src/ts/network.js";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { TOOLS, toolContext } from "@qorechain/mcp";
 
-type Entry = { hash: string; kind: "native" | "evm"; note?: string };
+/**
+ * What a recorded transaction must show:
+ * - `pqc`: hybrid signed, and the ML-DSA-87 layer verifies against the registered key.
+ * - `enrollment`: the one classically signed ML-DSA registration.
+ * - `classical`: an EVM-lane transaction. Its protection is the window that admitted it, recorded separately.
+ */
+type Tier = "pqc" | "enrollment" | "classical";
 
-type Report = { hash: string; ok: boolean; detail: string };
+type Entry = { hash: string; tier: Tier; note: string };
+type DeploymentFile = { network: string; transactions: Entry[] };
 
-function normalise(hash: string): string {
-  return hash.startsWith("0x") || hash.startsWith("0X") ? hash.slice(2) : hash;
+type Row = { file: string; hash: string; tier: Tier; ok: boolean; detail: string; note: string };
+
+type TransactionResult = { success: boolean; failure?: unknown; execution_failures?: unknown[] };
+type PqStatusResult = {
+  transaction_status: {
+    tier: string;
+    has_exactly_one_pqc_layer: boolean;
+    verification: { checked: boolean; verified: boolean | null; reason: string | null };
+  } | null;
+};
+
+function tool(name: string) {
+  const found = TOOLS.find((candidate) => candidate.name === name);
+  if (!found) throw new Error(`@qorechain/mcp has no ${name} tool`);
+  return found;
 }
 
-async function checkNative(hash: string): Promise<Report> {
-  const response = await fetch(`${TESTNET.rest}/cosmos/tx/v1beta1/txs/${normalise(hash).toUpperCase()}`);
-  if (!response.ok) return { hash, ok: false, detail: `HTTP ${response.status}` };
-  const body = (await response.json()) as {
-    tx_response?: { code?: number; events?: { type: string; attributes?: { key: string; value: string }[] }[] };
-  };
-  const code = body.tx_response?.code;
-  const verified = body.tx_response?.events?.some(
-    (event) =>
-      event.type === "pqc_hybrid_verify" &&
-      event.attributes?.some((attribute) => attribute.key === "status" && attribute.value === "verified"),
-  );
-  return {
-    hash,
-    ok: code === 0 && verified === true,
-    detail: `code=${String(code)} ml-dsa=${String(verified === true)}`,
-  };
-}
+const getTransaction = tool("get_transaction");
+const getPqStatus = tool("get_pq_status");
+const ctx = toolContext({ defaultNetwork: "testnet" });
 
-async function checkEvm(hash: string): Promise<Report> {
-  const response = await fetch(TESTNET.evmRpc, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "eth_getTransactionReceipt",
-      params: [hash.startsWith("0x") ? hash : `0x${hash}`],
-    }),
-  });
-  const body = (await response.json()) as { result?: { status?: string } | null };
-  const status = body.result?.status;
-  return { hash, ok: status === "0x1", detail: `status=${String(status)}` };
-}
-
-export async function checkEvidence(path: string): Promise<number> {
-  const file = JSON.parse(readFileSync(path, "utf8")) as { transactions?: Entry[] };
-  const entries = file.transactions ?? [];
-  if (entries.length === 0) {
-    console.log("no transactions recorded");
-    return 0;
+async function check(file: string, entry: Entry): Promise<Row> {
+  const row = { file, hash: entry.hash, tier: entry.tier, note: entry.note };
+  try {
+    const tx = (await getTransaction.handler({ network: "testnet", hash: entry.hash }, ctx)) as TransactionResult;
+    const pq = (await getPqStatus.handler({ network: "testnet", target: entry.hash }, ctx)) as PqStatusResult;
+    const status = pq.transaction_status;
+    const refused = (tx.execution_failures?.length ?? 0) > 0;
+    const parts = [`success=${String(tx.success)}`, `tier=${status?.tier ?? "?"}`];
+    let ok = tx.success === true && !refused && status?.tier === entry.tier;
+    if (entry.tier === "pqc") {
+      const verified = status?.has_exactly_one_pqc_layer === true && status.verification.verified === true;
+      parts.push(`ml-dsa=${String(verified)}`);
+      ok = ok && verified;
+    }
+    return { ...row, ok, detail: parts.join(" ") };
+  } catch (error) {
+    return { ...row, ok: false, detail: error instanceof Error ? error.message : String(error) };
   }
-  let failed = 0;
-  for (const entry of entries) {
-    const report = entry.kind === "native" ? await checkNative(entry.hash) : await checkEvm(entry.hash);
-    console.log(`${report.ok ? "ok" : "FAIL"} ${entry.kind} ${entry.hash} ${report.detail}`);
-    if (!report.ok) failed += 1;
-  }
-  return failed;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
-  const path = process.argv[2] ?? "deployments/evidence.json";
-  checkEvidence(path)
-    .then((failed) => process.exit(failed === 0 ? 0 : 1))
-    .catch((error: unknown) => {
-      console.error(error instanceof Error ? error.message : error);
+export async function checkEvidence(dir: string): Promise<Row[]> {
+  const files = readdirSync(dir).filter((name) => name.endsWith(".json")).sort();
+  const rows: Row[] = [];
+  for (const name of files) {
+    const document = JSON.parse(readFileSync(join(dir, name), "utf8")) as DeploymentFile;
+    if (document.network !== "qorechain-diana") throw new Error(`${name}: network ${document.network} is not the testnet`);
+    for (const entry of document.transactions ?? []) rows.push(await check(name, entry));
+  }
+  return rows;
+}
+
+function printTable(rows: Row[]): void {
+  const header = ["result", "file", "tier", "hash", "detail", "note"];
+  const lines = rows.map((row) => [row.ok ? "PASS" : "FAIL", row.file, row.tier, row.hash, row.detail, row.note]);
+  const widths = header.map((_, i) => Math.max(header[i].length, ...lines.map((line) => line[i].length)));
+  const format = (cells: string[]) => cells.map((cell, i) => cell.padEnd(widths[i])).join("  ");
+  console.log(format(header));
+  console.log(widths.map((width) => "-".repeat(width)).join("  "));
+  for (const line of lines) console.log(format(line));
+}
+
+const dir = process.argv[2] ?? "deployments";
+checkEvidence(dir)
+  .then((rows) => {
+    if (rows.length === 0) {
+      console.error(`no transactions recorded in ${dir}`);
       process.exit(1);
-    });
-}
+    }
+    printTable(rows);
+    const failed = rows.filter((row) => !row.ok).length;
+    console.log(`\n${rows.length - failed} passed, ${failed} failed`);
+    process.exit(failed === 0 ? 0 : 1);
+  })
+  .catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+  });

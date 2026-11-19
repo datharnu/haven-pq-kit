@@ -2,6 +2,15 @@
   "action": "0x6aaeaa5161a362642e7498096668299549240cb3122cbaf9651c733cf2fe3339",
   "quorumAction": "0x0932a6c9ed86ae2739921f9778b93044a3ca286a95e97fbc9e2079af73d0e4e4",
   "anyAction": "0xb7a4400b86955be306a4ff30cd5219c592bff277bfb93bf2bbeb757cce43a463",
+  "setMembers": {
+    "members": [
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "0xcccccccccccccccccccccccccccccccccccccccc"
+    ],
+    "threshold": 2,
+    "argsHash": "0x75e97668428734127144174cb9ac4d4871616df831af396f21cbde72cd66e0d9"
+  },
   "auth": {
     "chainId": "9800",
     "contract": "0x1111111111111111111111111111111111111111",

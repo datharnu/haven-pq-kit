@@ -45,3 +45,33 @@ Registration is the one classical transaction. The cosmjs secp256k1 signer deriv
 | Window closed | `B22F66C9D32888D112C36BC2E506499393AC91375B85C9822229133EC8E0E56B`. A following read returned `found=false`. |
 
 The Cosmos sequence and the EVM nonce are the same number. After the transfer, the REST account query still said sequence 2 while the chain expected 3. Closing the window reads `eth_getTransactionCount` (`pending`) instead.
+
+## ML-KEM-1024 publication
+
+`npm run pq -- register-kem spike` derived the ML-KEM-1024 key from the same mnemonic with QoreSeal (index 0), validated it, and published it in a hybrid-signed transaction. It then wrote the recipient card `cards/qor143f0ghn8slqguwez73087dvq8lqnuuukqdu9fl.json`, signed with the account's classical key and its ML-DSA-87 key.
+
+| Step | Result |
+| --- | --- |
+| `MsgRegisterKEMKey` | `E3A7A234B84DABFC6E59FCF966CE1E9A4EC5ED1C5B3E43060F1CA111BBC59012`, code 0 |
+| REST `/qorechain/pqc/v1/kem/{qor1}` | `found=true`, `ml-kem-1024`, 1,568 bytes |
+| SHA3-256 of the key | `0x88e3b72bdd0fcb79f5a67758e05715b5f689ab5a6d5b05b4a85ef5b7cfb38a9d`, the same hash the card names |
+| `verify-kem` | accepted. The card verifies under the ML-DSA key from `pqcKeyStatus` |
+
+Running `register-kem` again finds the same key on chain and sends nothing. A different key would be refused unless `--replace` is passed.
+
+## PqAuth running live
+
+`npm run probe` also sends the creation code of `test/live/PqAuthLiveProbe.sol` in an `eth_call` from the spike account. Nothing is deployed. The probe creates a `LiveAuthTarget` that runs `PqAuth.init` and `authorize` against the real precompiles.
+
+| Check | Result |
+| --- | --- |
+| Target address | `0x89B58275DF16f0d98496662240c77782D702E985`, matching the address predicted from the probe's nonce |
+| Real signature from the registered key | accepted, nonce moved to 1 |
+| Same message, one byte flipped | `SignatureInvalid` (`0x37e8456b`) |
+| Replay of the accepted signature | `SignatureInvalid` (the nonce has moved) |
+| An account with no registered key | `KeyNotRegistered` (`0x099326a9`) |
+| `eth_estimateGas` of the plain `pqcVerify` on a later run | 321,010 (the first run measured 321,430) |
+
+## Evidence through MCP
+
+`npm run evidence` reads `deployments/spikes.json` and calls the `@qorechain/mcp` handlers `get_transaction` and `get_pq_status` for each hash. All five pass. Registration is tier `enrollment`. Opening the window, closing it and publishing the KEM key are tier `pqc`, each with exactly one verified PQC layer. The EVM transfer is `classical`.

@@ -13,6 +13,7 @@ out/
 
 node_modules/
 .DS_Store
+.qorescan-cache/
 
 # Dotenv file
 .env

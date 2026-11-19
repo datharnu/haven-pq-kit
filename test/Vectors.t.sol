@@ -28,6 +28,13 @@ contract VectorsTest is Test {
         assertEq(PqQuorum.anyAction(action), vm.parseJsonBytes32(json, ".anyAction"));
     }
 
+    function test_setMembersArgsHashMatchesTypescript() public view {
+        string memory json = vm.readFile("vectors/messages.json");
+        address[] memory members = vm.parseJsonAddressArray(json, ".setMembers.members");
+        uint8 threshold = uint8(vm.parseJsonUint(json, ".setMembers.threshold"));
+        assertEq(keccak256(abi.encode(members, threshold)), vm.parseJsonBytes32(json, ".setMembers.argsHash"));
+    }
+
     function test_invoiceMessageMatchesTypescript() public view {
         string memory json = vm.readFile("vectors/messages.json");
         VendorSig.Invoice memory invoice = VendorSig.Invoice({

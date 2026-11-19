@@ -253,6 +253,24 @@ contract PqAuthTest is PqTestBase {
         assertEq(harness.nonce(), 1);
     }
 
+    function testFuzz_onlyTheCurrentNonceVerifies(uint8 steps, uint256 otherNonce) public {
+        steps = uint8(bound(steps, 0, 12));
+        harness.init(owner);
+        uint256 deadline = _deadline(1 hours);
+        for (uint256 i = 0; i < steps; i++) {
+            harness.authorize(action, argsHash, deadline, 1 days, _signed(action, argsHash, deadline));
+        }
+        assertEq(harness.nonce(), steps);
+
+        vm.assume(otherNonce != steps);
+        bytes memory stale = _sign(
+            owner, PqAuth.encodeMessage(block.chainid, address(harness), owner, action, otherNonce, deadline, argsHash)
+        );
+        vm.expectRevert(PqAuth.SignatureInvalid.selector);
+        harness.authorize(action, argsHash, deadline, 1 days, stale);
+        assertEq(harness.nonce(), steps);
+    }
+
     function testFuzz_aDeadlineOutsideTheWindowReverts(uint256 ttl) public {
         ttl = bound(ttl, 1 days + 1, 30 days);
         harness.init(owner);
