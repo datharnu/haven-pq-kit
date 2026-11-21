@@ -204,4 +204,6 @@ At that recorded run, Foundry passed 58 tests. Its five invariants held over 128
 
 [`docs/kits.md`](docs/kits.md) lists every pinned QoreChain package, the exact job it performs and the packages intentionally absent from this library. `npm audit` currently reports the `ws` advisory described there; the kit uses viem's HTTP transport and does not claim the advisory is fixed.
 
+The `PqAuth` and `PqQuorum` interface follows the public design of [`qore-pq-kit`](https://github.com/Adityaakr/qore-pq-kit) by Adityaakr, Apache-2.0. The implementation, tests, `VendorSig`, and recipient-card checks were written for Haven.
+
 The repository was started on 19 November 2026 during QoreChain's Build Before Q-Day developer fest. It is licensed under Apache-2.0; see [`LICENSE`](LICENSE).
